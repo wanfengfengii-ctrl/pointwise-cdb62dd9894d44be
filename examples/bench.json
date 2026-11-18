@@ -1,0 +1,14 @@
+{
+  "recording": "bench-17-shift-a",
+  "banks": {"P": [1, 2, 3, 239, 173], "Q": [1, 2]},
+  "views": [
+    {"name": "A", "bank_name": "P", "start": 0, "stride": 2, "count": 1, "width": 2, "byteorder": "little"},
+    {"name": "B", "bank_name": "P", "start": 1, "stride": 2, "count": 1, "width": 2, "byteorder": "big"},
+    {"name": "C", "bank_name": "Q", "start": 0, "stride": 2, "count": 1, "width": 2, "byteorder": "little"},
+    {"name": "R", "bank_name": "P", "start": 1, "stride": -1, "count": 2, "width": 2, "byteorder": "little"},
+    {"name": "O", "bank_name": "P", "start": 0, "stride": 1, "count": 2, "width": 2, "byteorder": "little"},
+    {"name": "M", "bank_name": "P", "start": 1, "stride": 1, "count": 1, "width": 1, "byteorder": "little"},
+    {"name": "FLAG", "bank_name": "P", "start": 3, "stride": 1, "count": 2, "width": 1, "byteorder": "little"}
+  ],
+  "selection": ["A", "B", "C"]
+}
