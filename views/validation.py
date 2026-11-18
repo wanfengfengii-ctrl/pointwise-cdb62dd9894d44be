@@ -2,6 +2,7 @@ from collections.abc import Iterable, Mapping
 
 from views.integers import validate_integer_format
 from views.layout import ViewLayout, covered_bounds
+from views.windows import normalize_bit_window
 
 
 def validate_view_batch(
@@ -30,6 +31,7 @@ def validate_view_batch(
             raise ValueError('start, stride and count must be integers')
         if view.stride == 0 or view.count < 1:
             raise ValueError('stride must be nonzero and count must be positive')
+        normalize_bit_window(view.width, view.byteorder, view.bit_start, view.bit_length)
         lower, upper = covered_bounds(view)
         if lower < 0 or upper > lengths[view.bank_name]:
             raise ValueError(f'view {view.name!r} extends outside its bank')

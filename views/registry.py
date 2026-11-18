@@ -23,20 +23,29 @@ class ViewRegistry:
                 element_count INTEGER NOT NULL,
                 width INTEGER NOT NULL,
                 byteorder TEXT NOT NULL,
+                bit_start INTEGER,
+                bit_length INTEGER,
                 PRIMARY KEY (recording_id, name),
                 FOREIGN KEY (recording_id, bank_name)
                     REFERENCES recording_banks(recording_id, bank_name)
             )
         ''')
+        # Older SQLite databases predate the optional bit-window columns.
+        columns = {row[1] for row in self._db.execute('PRAGMA table_info(view_layouts)')}
+        for column in ('bit_start', 'bit_length'):
+            if column not in columns:
+                self._db.execute(f'ALTER TABLE view_layouts ADD COLUMN {column} INTEGER')
 
     def get_catalog(self, recording_id: str) -> tuple[ViewLayout, ...]:
         rows = self._db.execute('''
-            SELECT name, bank_name, start_byte, stride_hex, element_count, width, byteorder
+            SELECT name, bank_name, start_byte, stride_hex, element_count, width,
+                   byteorder, bit_start, bit_length
             FROM view_layouts WHERE recording_id = ? ORDER BY name
         ''', (recording_id,))
         return tuple(
-            ViewLayout(name, bank, start, int(stride, 16), count, width, byteorder)
-            for name, bank, start, stride, count, width, byteorder in rows
+            ViewLayout(name, bank, start, int(stride, 16), count, width, byteorder,
+                       bit_start, bit_length)
+            for name, bank, start, stride, count, width, byteorder, bit_start, bit_length in rows
         )
 
     def store_batch(
@@ -55,11 +64,11 @@ class ViewRegistry:
             self._db.executemany('''
                 INSERT INTO view_layouts (
                     recording_id, name, bank_name, start_byte, stride_hex,
-                    element_count, width, byteorder
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    element_count, width, byteorder, bit_start, bit_length
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 (recording_id, view.name, view.bank_name, view.start, hex(view.stride),
-                 view.count, view.width, view.byteorder)
+                 view.count, view.width, view.byteorder, view.bit_start, view.bit_length)
                 for view in pending
             ))
             return self.get_catalog(recording_id)

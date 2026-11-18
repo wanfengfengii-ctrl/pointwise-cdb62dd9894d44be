@@ -3,8 +3,18 @@ import sys
 import unittest
 
 
-def main():
+def _discover():
     suite = unittest.defaultTestLoader.discover('tests', top_level_dir='.')
+    try:
+        import bit_window_cases
+    except ImportError as error:
+        print(f'cannot load public bit-window fixtures: {error}', file=sys.stderr)
+        raise
+    return unittest.TestSuite([suite, unittest.defaultTestLoader.loadTestsFromModule(bit_window_cases)])
+
+
+def main():
+    suite = _discover()
     if suite.countTestCases():
         result = unittest.TextTestRunner(verbosity=2).run(suite)
     else:

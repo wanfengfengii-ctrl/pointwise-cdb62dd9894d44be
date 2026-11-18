@@ -5,6 +5,7 @@ import json
 
 from handover.payload import SelectedPayload, ViewByteReferences, validate_payload_references
 from views.integers import validate_integer_format
+from views.windows import has_bit_window, normalize_bit_window
 
 
 @dataclass(frozen=True)
@@ -12,7 +13,7 @@ class PackageEnvelope:
     package_id: str
     recording_id: str
     payload: SelectedPayload
-    wire_version: int = 2
+    wire_version: int | None = None
 
 
 def _json_bytes(value) -> bytes:
@@ -53,8 +54,13 @@ def _encode_views(payload: SelectedPayload, version: int) -> list[dict]:
         slots = sum(len(view.elements) * view.width for view in payload.views)
         if slots != len(payload.data):
             raise ValueError('wire version 1 cannot represent shared references')
+    if version != 3 and any(has_bit_window(view.bit_start, view.bit_length) for view in payload.views):
+        raise ValueError('only wire version 3 can carry bit windows')
     for view in payload.views:
         fields = {'name': view.name, 'width': view.width, 'byteorder': view.byteorder}
+        if version == 3 and has_bit_window(view.bit_start, view.bit_length):
+            fields['bit_start'] = view.bit_start
+            fields['bit_length'] = view.bit_length
         if version == 1:
             view_bytes = bytes(payload.data[ref] for element in view.elements for ref in element)
             fields['data'] = base64.b64encode(view_bytes).decode('ascii')
@@ -64,9 +70,17 @@ def _encode_views(payload: SelectedPayload, version: int) -> list[dict]:
     return result
 
 
+def _intrinsic_version(payload: SelectedPayload) -> int:
+    if any(has_bit_window(view.bit_start, view.bit_length) for view in payload.views):
+        return 3
+    return 2
+
+
 def encode_package(package: PackageEnvelope) -> bytes:
     version = package.wire_version
-    if type(version) is not int or version not in (1, 2):
+    if version is None:
+        version = _intrinsic_version(package.payload)
+    if type(version) is not int or version not in (1, 2, 3):
         raise ValueError('unsupported package version')
     validate_payload_references(package.payload)
     body = {
@@ -74,7 +88,7 @@ def encode_package(package: PackageEnvelope) -> bytes:
         'recording': _identifier(package.recording_id),
         'views': _encode_views(package.payload, version),
     }
-    if version == 2:
+    if version != 1:
         body['data'] = base64.b64encode(package.payload.data).decode('ascii')
     signed = {'version': version, 'body': body}
     return _json_bytes({**signed, 'sha256': sha256(_json_bytes(signed)).hexdigest()})
@@ -100,16 +114,34 @@ def _read_inline_views(items: list) -> SelectedPayload:
     return SelectedPayload(bytes(data), tuple(references))
 
 
-def _read_referenced_views(items: list, data: bytes) -> SelectedPayload:
+def _view_fields(item) -> tuple[dict, int | None, int | None]:
+    if not isinstance(item, dict):
+        raise ValueError('invalid package object fields')
+    base = {'name', 'width', 'byteorder', 'elements'}
+    window = {'bit_start', 'bit_length'}
+    keys = item.keys()
+    if keys == base:
+        return item, None, None
+    if keys == base | window:
+        validate_integer_format(item['width'], item['byteorder'])
+        normalize_bit_window(item['width'], item['byteorder'], item['bit_start'], item['bit_length'])
+        return item, item['bit_start'], item['bit_length']
+    raise ValueError('invalid package object fields')
+
+
+def _read_referenced_views(items: list, data: bytes, version: int) -> SelectedPayload:
     references = []
     for item in items:
-        _object(item, {'name', 'width', 'byteorder', 'elements'})
-        elements = item['elements']
+        fields, bit_start, bit_length = _view_fields(item)
+        if bit_start is not None and version != 3:
+            raise ValueError('only wire version 3 can carry bit windows')
+        elements = fields['elements']
         if not isinstance(elements, list) or any(not isinstance(element, list) for element in elements):
             raise ValueError('package element references must be arrays')
         references.append(ViewByteReferences(
-            item['name'], item['width'], item['byteorder'],
+            fields['name'], fields['width'], fields['byteorder'],
             tuple(tuple(element) for element in elements),
+            bit_start, bit_length,
         ))
     return SelectedPayload(data, tuple(references))
 
@@ -121,10 +153,10 @@ def decode_package(wire: bytes) -> PackageEnvelope:
         outer = _object(json.loads(wire.decode('utf-8'), object_pairs_hook=_unique_object),
                         {'version', 'body', 'sha256'})
         version = outer['version']
-        if type(version) is not int or version not in (1, 2):
+        if type(version) is not int or version not in (1, 2, 3):
             raise ValueError('unsupported package version')
         fields = {'id', 'recording', 'views'}
-        if version == 2:
+        if version != 1:
             fields.add('data')
         body = _object(outer['body'], fields)
         signed = {'version': version, 'body': body}
@@ -136,7 +168,7 @@ def decode_package(wire: bytes) -> PackageEnvelope:
         if version == 1:
             payload = _read_inline_views(items)
         else:
-            payload = _read_referenced_views(items, _binary(body['data']))
+            payload = _read_referenced_views(items, _binary(body['data']), version)
         validate_payload_references(payload)
         return PackageEnvelope(_identifier(body['id']), _identifier(body['recording']), payload, version)
     except RecursionError as error:
